@@ -1,0 +1,124 @@
+---
+imagePullSecrets:
+  - name: yc-registry-secret
+
+ui:
+  replicaCount: 2
+  image:
+    repository: mreferre/yelb-ui
+    tag: "0.7"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+  readinessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+
+appserver:
+  replicaCount: 2
+  image:
+    repository: mreferre/yelb-appserver
+    tag: "0.5"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+  readinessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+
+db:
+  replicaCount: 1
+  image:
+    repository: my-repo/yelb-db
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5432
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "100m"
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+  readinessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 40
+
+redis:
+  replicaCount: 1
+  
+  image:
+    repository: redis
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 6379
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "100m"
+      memory: "256Mi"
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  config:
+    maxmemory: "200mb"
+    maxmemoryPolicy: "allkeys-lru"
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 3
+    periodSeconds: 5
+
+ingress:
+  enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: http01-clusterissuer
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - s060709.online
+      secretName: domain-name-secret
+  hosts:
+    - host: s060709.online
+      paths:
+        - path: /
+          pathType: Prefix
+
+clusterissuer:
+  email: rizovoyb@yandex.ru

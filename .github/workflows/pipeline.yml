@@ -1,0 +1,176 @@
+---
+name: CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: v3.13.3
+
+      - name: Run Helm Lint
+        run: helm lint ./deployments/helm
+
+      - name: Lint Code Base
+        uses: super-linter/super-linter@v7.1.0
+        env:
+          VALIDATE_ALL_CODEBASE: false
+          VALIDATE_RUBY: true
+          FIX_RUBY: true
+          VALIDATE_JAVASCRIPT_STANDARD: true
+          FIX_JAVASCRIPT_STANDARD: true
+          VALIDATE_GITLEAKS: true
+          VALIDATE_MARKDOWN_PRETTIER: true
+          FIX_MARKDOWN_PRETTIER: true
+          VALIDATE_XML: true
+          VALIDATE_NATURAL_LANGUAGE: true
+          DEFAULT_BRANCH: "main"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-appserver:
+    name: Build Appserver
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Yandex Cloud Container Registry
+        id: login-cr
+        uses: yc-actions/yc-cr-login@v2
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+
+      - name: Build, tag, and push image to Yandex Cloud Container Registry
+        env:
+          CR_REGISTRY: ${{ vars.CR_REGISTRY }}
+          CR_REPOSITORY: yelb-appserver
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest \
+          ./yelb-appserver
+
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest
+
+  build-db:
+    name: Build DB
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Yandex Cloud Container Registry
+        id: login-cr
+        uses: yc-actions/yc-cr-login@v2
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+
+      - name: Build, tag, and push image to Yandex Cloud Container Registry
+        env:
+          CR_REGISTRY: ${{ vars.CR_REGISTRY }}
+          CR_REPOSITORY: yelb-db
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest \
+          ./yelb-db
+
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest
+
+  build-ui:
+    name: Build UI
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Yandex Cloud Container Registry
+        id: login-cr
+        uses: yc-actions/yc-cr-login@v2
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+
+      - name: Build, tag, and push image to Yandex Cloud Container Registry
+        env:
+          CR_REGISTRY: ${{ vars.CR_REGISTRY }}
+          CR_REPOSITORY: yelb-ui
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG \
+          -t cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest \
+          ./yelb-ui
+
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:$IMAGE_TAG
+          docker push cr.yandex/$CR_REGISTRY/$CR_REPOSITORY:latest
+
+  deploy:
+    needs: [build-ui, build-db, build-appserver]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+  
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+      
+      - name: mkdir .kube
+        run: mkdir -p $HOME/.kube
+
+      - name: Set kubeconfig
+        run: echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
+        shell: bash
+     
+      - name: Debug kubeconfig
+        run: cat $HOME/.kube/config
+
+      - name: Test kubectl access
+        run: kubectl cluster-info
+              
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          version: "latest"
+          
+      - name: Deploy Helm Chart
+        env:
+          CR_REGISTRY: ${{ vars.CR_REGISTRY }}
+          IMAGE_TAG: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          helm upgrade --install my-release ./deployments/helm \
+            --set ui.image.repository=cr.yandex/$CR_REGISTRY/yelb-ui \
+            --set ui.image.tag=$IMAGE_TAG \
+            --set appserver.image.repository=cr.yandex/$CR_REGISTRY/yelb-appserver \
+            --set appserver.image.tag=$IMAGE_TAG \
+            --set db.image.repository=cr.yandex/$CR_REGISTRY/yelb-db \
+            --set db.image.tag=$IMAGE_TAG \
+            --set kubeconfig=$HOME/.kube/config \
+            -n default
